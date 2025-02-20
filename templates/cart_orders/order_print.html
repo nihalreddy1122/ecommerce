@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Print Order #{{ order.id }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .order-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .order-details {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .items-table th, .items-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .print-button {
+            margin: 20px 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="order-header">
+        <h1>Order #{{ order.id }}</h1>
+        <p>Order Date: {{ order.created_at|date:"d-m-Y H:i" }}</p>
+        <p>Customer: {{ customer.get_full_name }}</p>
+    </div>
+
+    <div class="order-details">
+        <h2>Shipping Address</h2>
+        <p>{{ address.full_name }}</p>
+        <p>{{ address.address_line_1 }}</p>
+        <p>{{ address.city }}, {{ address.state }} - {{ address.postal_code }}</p>
+    </div>
+
+    <div class="order-items">
+        <h2>Items</h2>
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Subtotal</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ item.product_variant.product.name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.price }}</td>
+                    <td>{{ item.quantity|floatformat:2|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="print-button">
+        <button onclick="window.print()">Print</button>
+    </div>
+</body>
+</html>

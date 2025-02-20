@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order Status Update</title>
+</head>
+<body>
+    <h2>Hi {{ customer_name }},</h2>
+    <p>Your order item <strong>{{ order_item.product_variant.product.name }}</strong> has a status update:</p>
+    <p><strong>New Status:</strong> {{ status }}</p>
+    <p>Order ID: <strong>{{ order_item.order.id }}</strong></p>
+    <p>Thank you for shopping with us!</p>
+    <p>- The Team</p>
+</body>
+</html>

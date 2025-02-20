@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        .container {
+            width: 90%;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #ffffff;
+            border: 1px solid #eaeaea;
+            border-radius: 8px;
+        }
+        .header {
+            text-align: center;
+            font-size: 24px;
+            color: #007bff;
+        }
+        .content {
+            text-align: left;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        .footer {
+            text-align: center;
+            font-size: 14px;
+            margin-top: 20px;
+            color: #777;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">Welcome Back to HIDDEN STORES!</div>
+        <div class="content">
+            <p>Hi {{ user.first_name }},</p>
+            <p>Your OTP for login is:</p>
+            <h2>{{ otp }}</h2>
+            <p>Please use this OTP to access your account. It will expire in 5 minutes.</p>
+            <a href="{{ site_url }}" class="btn">Access Your Account</a>
+        </div>
+        <div class="footer">
+            Need help? Contact us at support@hiddenstores.com.<br>
+            Thank you for choosing HIDDEN STORES!
+        </div>
+    </div>
+</body>
+</html>

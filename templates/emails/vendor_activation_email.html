@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background-color: #f9f9f9;
+        color: #333;
+      }
+      .container {
+        width: 90%;
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 20px;
+        background: #ffffff;
+        border: 1px solid #eaeaea;
+        border-radius: 8px;
+      }
+      .header {
+        text-align: center;
+        font-size: 24px;
+        color: #007bff;
+      }
+      .content {
+        text-align: left;
+        font-size: 16px;
+        line-height: 1.6;
+      }
+      .footer {
+        text-align: center;
+        font-size: 14px;
+        margin-top: 20px;
+        color: #777;
+      }
+      .btn {
+        display: inline-block;
+        margin-top: 20px;
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">Your Vendor Account is Officially Unleashed!</div>
+      <div class="content">
+        <p>Hey there, {{ user.first_name }},</p>
+        <p>
+          Pop the virtual confetti! Your vendor account on
+          <strong>HIDDEN STORES</strong> is now live and kicking. It's time to
+          let the world see your amazing products and small-brand charm.
+        </p>
+        <p>
+          Remember, every big brand was once a small dream. So go ahead, dazzle
+          your future customers, and show them why you're the next big thing! If
+          you get stuck, just holler at our support team – we're like your
+          brand's fairy godmother, but better (no pumpkins, just solutions).
+        </p>
+        <a href="{{ site_url }}/login" class="btn">Dive into Your Account</a>
+      </div>
+      <div class="footer">
+        <p>
+          Welcome to HIDDEN STORES – where small dreams meet big opportunities!
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

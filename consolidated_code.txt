@@ -1,0 +1,1656 @@
+# App: products
+# File: products\models.py
+from django.db import models
+from django.contrib.auth import get_user_model
+from vendors.models import VendorDetails
+from django.utils.text import slugify
+from PIL import Image
+import os
+from django.conf import settings
+
+User = get_user_model()
+
+# ================================
+# Category Model
+# ================================
+from django.db import models
+from django.utils.text import slugify
+
+class Category(models.Model):
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=150, unique=True, blank=True)
+    banners = models.ImageField(upload_to='category_banners/', blank=True, null=True, help_text="Banner image for the category")
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True, related_name='subcategories'
+    )
+    icon = models.ImageField(upload_to='category_icons/', blank=True, null=True, help_text="Icon image for the category")
+
+    class Meta:
+        verbose_name_plural = 'Categories'
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.parent.name if self.parent else 'Root'})"
+
+    def get_leaf_categories(self):
+        # Recursively fetch all leaf categories
+        if not self.subcategories.exists():
+            return [self]
+        leaves = []
+        for subcategory in self.subcategories.all():
+            leaves.extend(subcategory.get_leaf_categories())
+        return leaves
+
+    def get_all_subcategories(self):
+        """
+        Recursively fetch all subcategories, including nested ones.
+        """
+        subcategories = set(self.subcategories.all())
+        for subcategory in self.subcategories.all():
+            subcategories.update(subcategory.get_all_subcategories())
+        return subcategories
+
+# ================================
+# Attribute and Attribute Value Models
+# ================================
+class Attribute(models.Model):
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=150, unique=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+class AttributeValue(models.Model):
+    attribute = models.ForeignKey(Attribute, on_delete=models.CASCADE, related_name='values')
+    value = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=150, unique=True, blank=True)
+
+    class Meta:
+        unique_together = ('attribute', 'value')
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.value)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.attribute.name}: {self.value}"
+
+# ================================
+# Product Model
+# ================================
+from django.db import models
+from django.core.exceptions import ValidationError
+from django.utils.text import slugify
+
+class Product(models.Model):
+    vendor = models.ForeignKey(VendorDetails, on_delete=models.CASCADE, related_name='products')
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=250, unique=True, blank=True)
+    description = models.TextField(blank=True, null=True, help_text="Detailed product description")
+    additional_details = models.JSONField(blank=True, null=True, help_text="Structured additional details for the product")
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, related_name='products')
+    thumbnail = models.ImageField(upload_to='product_thumbnails/',null=True)
+    stock = models.PositiveIntegerField(default= 0)
+    is_active = models.BooleanField(default=True)
+    is_returnable = models.BooleanField(default=False, help_text="Can this product be returned?")
+    max_return_days = models.PositiveIntegerField(blank=True, null=True, help_text="Maximum return days (if returnable)")
+    is_cancelable = models.BooleanField(default=True, help_text="Can this product be canceled?")
+    cancellation_stage = models.CharField(
+        max_length=50,
+        choices=[
+            ('before_packing', 'Before Packing'),
+            ('before_shipping', 'Before Shipping'),
+            ('before_delivery', 'Before Delivery'),
+        ],
+        blank=True,
+        null=True,
+        help_text="Stage at which cancellation is allowed"
+    )
+    is_cod_allowed = models.BooleanField(default=True, help_text="Is cash on delivery allowed for this product?")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        # Validate returnable logic
+        if self.is_returnable and not self.max_return_days:
+            raise ValidationError("Max return days must be specified if the product is returnable.")
+        
+        # Validate cancelable logic
+        if self.is_cancelable and not self.cancellation_stage:
+            raise ValidationError("Cancellation stage must be specified if the product is cancelable.")
+
+    def save(self, *args, **kwargs):
+        # Call clean method for validation before saving
+        self.clean()
+        if not self.slug:
+            self.slug = slugify(f"{self.vendor.id}-{self.name}")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+# ================================
+# Product Variant Modell
+# ================================
+from django.db import models
+from django.utils.text import slugify
+from PIL import Image
+import os
+from django.conf import settings
+
+import random
+import string
+from django.utils.text import slugify
+
+class ProductVariant(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='variants')
+    attributes = models.ManyToManyField(AttributeValue, related_name='variants')
+    base_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    offer_price = models.DecimalField(max_digits=10, decimal_places=2)
+    stock = models.PositiveIntegerField()
+    sku = models.CharField(max_length=14, unique=True, blank=True, help_text="Unique SKU for the product variant")
+
+    @property
+    def discount_percentage(self):
+        if self.base_price > 0:
+            return ((self.base_price - self.offer_price) / self.base_price) * 100
+        return 0
+
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding  # Check if the instance is being created
+        super().save(*args, **kwargs)  # Save the instance to generate primary key
+
+        if is_new and not self.sku:
+            # Generate SKU in the format XXX-XXX-XXXX
+            random_chars = ''.join(random.choices(string.ascii_uppercase, k=3))  # First 3 letters
+            random_middle = ''.join(random.choices(string.ascii_uppercase + string.digits, k=3))  # Next 3
+            random_digits = ''.join(random.choices(string.digits, k=4))  # Last 4 digits
+            self.sku = f"{random_chars}-{random_middle}-{random_digits}"
+            super().save(update_fields=['sku'])  # Update SKU field after creation
+
+    def __str__(self):
+        if not self.pk:
+            return "Unsaved ProductVariant"
+        attributes = ", ".join([str(value) for value in self.attributes.all()])
+        return f"{self.product.name} ({attributes})"
+
+
+class VariantImage(models.Model):
+    product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='variant_images/')
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self._convert_image_to_jpeg()
+
+    def _convert_image_to_jpeg(self):
+        if self.image:
+            try:
+                input_path = self.image.path
+                output_path = f"{os.path.splitext(input_path)[0]}.jpeg"
+                if not os.path.exists(output_path):
+                    with Image.open(input_path) as img:
+                        img = img.convert('RGB')
+                        img.save(output_path, 'JPEG', quality=85)
+                    self.image.name = os.path.relpath(output_path, settings.MEDIA_ROOT)
+                    super().save(update_fields=['image'])
+            except Exception as e:
+                print(f"Error converting image to JPEG: {e}")
+
+    def __str__(self):
+        return f"Image for Variant {self.product_variant.sku}"
+
+
+
+
+
+# ================================
+# Product Image Model
+# ================================
+class ProductImage(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='product_images/')
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self._convert_image_to_jpeg()
+
+    def _convert_image_to_jpeg(self):
+        if self.image:
+            try:
+                input_path = self.image.path
+                output_path = f"{os.path.splitext(input_path)[0]}.jpeg"
+                if not os.path.exists(output_path):
+                    with Image.open(input_path) as img:
+                        img = img.convert('RGB')
+                        img.save(output_path, 'JPEG', quality=85)
+                    self.image.name = os.path.relpath(output_path, settings.MEDIA_ROOT)
+                    super().save(update_fields=['image'])
+            except Exception as e:
+                print(f"Error converting image to JPEG: {e}")
+
+    def __str__(self):
+        return f"Image for {self.product.name}"
+
+# App: products/models.py
+
+from django.db import models
+from django.core.exceptions import ValidationError
+from vendors.models import VendorDetails
+from .models import Product
+
+class FeaturedProduct(models.Model):
+    vendor = models.ForeignKey(
+        VendorDetails,
+        on_delete=models.CASCADE,
+        related_name='featured_products',
+        help_text="Vendor owning the featured product"
+    )
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='featured_status',
+        help_text="The featured product"
+    )
+    added_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the product was marked as featured")
+
+    def save(self, *args, **kwargs):
+        # Enforce 10-product limit per vendor
+        if self.vendor.featured_products.count() >= 10:
+            raise ValidationError("A vendor can only have 10 featured products.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Featured Product: {self.product.name} by {self.vendor.shop_name}"
+
+
+
+
+
+from django.db import models
+from django.utils.timezone import now
+from .models import Product
+from vendors.models import VendorDetails
+
+class LimitedEditionProduct(models.Model):
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="limited_edition",
+        help_text="The product being marked as Limited Edition"
+    )
+    vendor = models.ForeignKey(
+        VendorDetails,
+        on_delete=models.CASCADE,
+        help_text="Vendor who is setting the Limited Edition"
+    )
+    limited_stock = models.PositiveIntegerField(
+        help_text="Stock allocated specifically for Limited Edition"
+    )
+    available_from = models.DateTimeField(
+        help_text="Start date for Limited Edition availability",
+        default=now
+    )
+    available_until = models.DateTimeField(
+        help_text="End date for Limited Edition availability"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-available_from']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(available_from__lt=models.F('available_until')),
+                name="valid_limited_edition_dates"
+            )
+        ]
+
+    def __str__(self):
+        return f"Limited Edition: {self.product.name} ({self.limited_stock} items)"
+
+
+# File: products\serializers.py
+from rest_framework import serializers
+from .models import Category, Attribute, AttributeValue, Product, ProductVariant, ProductImage
+from rest_framework.exceptions import ValidationError
+
+# ================================
+# Category Serializer
+# ================================
+class CategorySerializer(serializers.ModelSerializer):
+    subcategories = serializers.SerializerMethodField()
+    icon = serializers.ImageField(read_only=True)
+    products = serializers.SerializerMethodField()  # Fetch related products
+
+    class Meta:
+        model = Category
+        fields = ['id', 'banners','name', 'slug', 'parent', 'subcategories', 'icon', 'products']
+
+    def get_subcategories(self, obj):
+        return CategorySerializer(obj.subcategories.all(), many=True).data
+
+    def get_products(self, obj):
+        # Use the correct related_name: 'products'
+        products = obj.products.all()
+        return ProductSerializer(products, many=True).data
+
+
+class CategorySerializernavbar(serializers.ModelSerializer):
+    subcategories = serializers.SerializerMethodField()
+    icon = serializers.ImageField(read_only=True)
+
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug', 'parent', 'subcategories', 'icon']
+
+    def get_subcategories(self, obj):
+        # Use CategorySerializernavbar recursively
+        return CategorySerializernavbar(obj.subcategories.all(), many=True).data
+    
+# ================================
+# Attribute and Attribute Value Serializers
+# ================================
+class AttributeValueSerializer(serializers.ModelSerializer):
+    attribute = serializers.CharField(source="attribute.name", read_only=True)
+
+    class Meta:
+        model = AttributeValue
+        fields = ['id','attribute', 'attribute', 'value', 'slug']
+
+class AttributeSerializer(serializers.ModelSerializer):
+    values = AttributeValueSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Attribute
+        fields = ['id', 'name', 'slug', 'values']
+
+# ================================
+# Product Image Serializer
+# ================================
+class ProductImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ['id', 'product', 'image']
+
+# ================================
+# Product Variant Serializer
+# ================================
+
+from .models import VariantImage
+
+class VariantImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VariantImage
+        fields = ['id', 'product_variant', 'image']
+
+
+class ProductVariantSerializer(serializers.ModelSerializer):
+    attributes = AttributeValueSerializer(many=True, read_only=True)  # ✅ Return full attribute details
+    attribute_ids = serializers.PrimaryKeyRelatedField(
+        queryset=AttributeValue.objects.all(), many=True, write_only=True
+    )
+    discount_percentage = serializers.ReadOnlyField()
+    images = VariantImageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ProductVariant
+        fields = [
+            'id', 'product', 'attributes', 'attribute_ids', 'base_price', 'offer_price',
+            'discount_percentage', 'stock', 'sku', 'images'
+        ]
+        extra_kwargs = {
+            'attribute_ids': {'write_only': True}  # ✅ Hide attribute_ids in response, use for input only
+        }
+
+    def create(self, validated_data):
+        attributes = validated_data.pop('attribute_ids', [])  # ✅ Extract attributes (write-only)
+        product = validated_data.get('product')
+
+        
+        existing_variants = ProductVariant.objects.filter(product=product)
+        for variant in existing_variants:
+            existing_attribute_ids = set(variant.attributes.values_list('id', flat=True))
+            new_attribute_ids = set(attr.id for attr in attributes)
+            if existing_attribute_ids == new_attribute_ids:
+                raise ValidationError("A product variant with the same attribute values already exists.")
+
+       
+        product_variant = ProductVariant.objects.create(**validated_data)
+        product_variant.attributes.set(attributes)  # ✅ Set ManyToMany attributes
+
+        
+        product.stock += product_variant.stock
+
+        
+        if product.is_cancelable and not product.cancellation_stage:
+            product.cancellation_stage = "Default Stage"
+
+        product.save()
+        return product_variant
+
+    def update(self, instance, validated_data):
+        attributes = validated_data.pop('attribute_ids', [])
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+
+        # ✅ Update attributes if provided
+        if attributes:
+            instance.attributes.set(attributes)
+
+        return instance
+
+
+
+# ================================
+# Product Serializer
+# ================================
+from rest_framework import serializers
+from .models import Product
+from .serializers import ProductVariantSerializer, ProductImageSerializer
+
+class ProductSerializer(serializers.ModelSerializer):
+    variants = ProductVariantSerializer(many=True, read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
+    product_id = serializers.IntegerField(source='id', read_only=True)  # Added product_id field
+
+    class Meta:
+        model = Product
+        fields = [
+            'id','product_id' ,'name', 'slug', 'description', 'additional_details', 'category',
+            'thumbnail', 'is_returnable', 'max_return_days', 'is_cancelable', 'cancellation_stage', 'is_cod_allowed',
+            'created_at', 'updated_at', 'variants', 'images', 'stock',
+        ]
+
+    def validate(self, data):
+        # Validate is_returnable and max_return_days
+        if data.get('is_returnable') and not data.get('max_return_days'):
+            raise serializers.ValidationError({"max_return_days": "This field is required if the product is returnable."})
+
+        # Validate is_cancelable and cancellation_stage
+        if data.get('is_cancelable') and not data.get('cancellation_stage'):
+            raise serializers.ValidationError({"cancellation_stage": "This field is required if the product is cancelable."})
+        
+        return data
+
+class RelatedProductSerializer(serializers.ModelSerializer):
+    offer_price = serializers.SerializerMethodField()  # Fetch the offer price dynamically
+    base_price = serializers.SerializerMethodField()  # Fetch the base price dynamically
+    product_id = serializers.IntegerField(source='id', read_only=True)  # Added product_id field
+
+    class Meta:
+        model = Product
+        fields = [
+            'id','product_id' ,'name', 'category',
+            'thumbnail',  'offer_price', 'base_price',
+        ]
+    def get_offer_price(self, obj):
+        # Fetch the offer price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().offer_price  # Use offer_price from the variant
+        return None  # Return None if no variants
+
+    def get_base_price(self, obj):
+        # Fetch the base price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().base_price  # Use base_price from the variant
+        return None  # Return None if no variants
+
+
+# App: products/serializers.py
+
+from rest_framework import serializers
+from .models import FeaturedProduct
+
+class FeaturedProductSerializer(serializers.ModelSerializer):
+    store_name = serializers.CharField(source='vendor.shop_name', read_only=True)
+    product_id = serializers.IntegerField(source='id', read_only=True)  # Added product_id field
+
+    class Meta:
+        model = FeaturedProduct
+        fields = ['id', 'product_id', 'added_at','store_name']
+        read_only_fields = ['vendor']  # Prevent vendor from being passed in the request
+
+
+from rest_framework import serializers
+from .models import Product
+
+class ProductFilterSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    store_name = serializers.CharField(source='vendor.shop_name', read_only=True)
+    price = serializers.SerializerMethodField()  # Fetch the offer price dynamically
+    base_price = serializers.SerializerMethodField()  # Fetch the base price dynamically
+    attributes = ProductVariantSerializer(source="variants", many=True, read_only=True)
+
+    class Meta:
+        model = Product
+        fields = ['id', 'store_name', 'name', 'category', 'category_name', 'thumbnail', 'price', 'base_price', 'stock','attributes']
+
+    def get_price(self, obj):
+        # Fetch the offer price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().offer_price  # Use offer_price from the variant
+        return None  # Return None if no variants
+
+    def get_base_price(self, obj):
+        # Fetch the base price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().base_price  # Use base_price from the variant
+        return None  # Return None if no variants
+
+
+from rest_framework import serializers
+from .models import Product
+
+class NewArrivalsSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    product_id = serializers.IntegerField(source='id', read_only=True)  # Added product_id field
+    vendor_name = serializers.CharField(source='vendor.shop_name', read_only=True)
+    base_price = serializers.SerializerMethodField()
+    offer_price = serializers.SerializerMethodField()  # Fetch price dynamically from the first variant
+    
+    class Meta:
+        model = Product
+        fields = [
+            'id',
+            'product_id',
+            'name',
+            'vendor_name',
+            'category',
+            'category_name',
+            'thumbnail',
+            'created_at',
+            'stock',
+            'offer_price',
+            'base_price',
+        ]
+
+    def get_offer_price(self, obj):
+        # Fetch the price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().offer_price  # Use offer_price field from the variant
+        return None  # Return None if no variants are available
+
+    def get_base_price(self, obj):
+        # Fetch the base price from the first variant if available
+        if obj.variants.exists():
+            return obj.variants.first().base_price  # Use base_price field from the variant
+        return None  # Return None if no variants are available
+    
+
+
+
+from rest_framework import serializers
+from products.models import Category
+
+class StoreCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug', 'parent', 'subcategories', 'icon']  # Include only the fields you need
+
+
+
+from rest_framework import serializers
+from .models import LimitedEditionProduct
+
+class LimitedEditionProductSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source='product.id', read_only=True)  # Added product_id field
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    vendor_name = serializers.CharField(source='vendor.shop_name', read_only=True)
+    thumbnail = serializers.ImageField(source='product.thumbnail', read_only=True)
+    leaf_category_name = serializers.CharField(source='product.category.name', read_only=True)
+    base_price = serializers.SerializerMethodField()
+    offer_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LimitedEditionProduct
+        fields = [
+            'id',"product_id", 'product', 'product_name', 'vendor', 'vendor_name',
+            'thumbnail', 'leaf_category_name', 'limited_stock',
+            'available_from', 'available_until', 'base_price', 'offer_price',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ('vendor', 'created_at', 'updated_at')  # ✅ Fix vendor field
+
+    def validate(self, data):
+        user = self.context['request'].user
+        product = data['product']
+
+        # Get the vendor from the authenticated user
+        try:
+            vendor = user.vendor_details
+        except AttributeError:
+            raise serializers.ValidationError("You are not a registered vendor.")
+
+        # Ensure the product belongs to the vendor
+        if product.vendor != vendor:
+            raise serializers.ValidationError("The product does not belong to you.")
+
+        # If the user is not an admin, ensure they can only manage their own products
+        if not user.is_staff and product.vendor != vendor:
+            raise serializers.ValidationError("You can only manage products owned by your account.")
+
+        return data
+
+    def get_base_price(self, obj):
+        """
+        Fetch the base price from the first available product variant.
+        """
+        first_variant = obj.product.variants.first()
+        return first_variant.base_price if first_variant else None
+
+    def get_offer_price(self, obj):
+        """
+        Fetch the offer price from the first available product variant.
+        """
+        first_variant = obj.product.variants.first()
+        return first_variant.offer_price if first_variant else None
+
+
+
+
+
+
+# File: products\views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from .models import Category, Attribute, AttributeValue, Product, ProductVariant, ProductImage
+from .serializers import (
+    CategorySerializer,
+    AttributeSerializer,
+    AttributeValueSerializer,
+    ProductSerializer,
+    ProductVariantSerializer,
+    ProductImageSerializer
+)
+
+# ================================
+# Category Views
+# ================================
+class CategoryListCreateView(ListCreateAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+class CategoryDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# ================================
+# Leaf Category Views
+# ================================
+
+class LeafCategoriesByParentView(APIView):
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get(self, request, parent_id):
+        try:
+            parent_category = Category.objects.get(id=parent_id)
+        except Category.DoesNotExist:
+            return Response({'error': 'Category not found.'}, status=404)
+
+        # Fetch all leaf categories under the selected category
+        leaf_categories = parent_category.get_leaf_categories()
+        serializer = CategorySerializer(leaf_categories, many=True)
+        return Response(serializer.data)
+
+# ================================
+# Attribute Views
+# ================================
+class AttributeListCreateView(ListCreateAPIView):
+    queryset = Attribute.objects.all()
+    serializer_class = AttributeSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+class AttributeDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = Attribute.objects.all()
+    serializer_class = AttributeSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+class AttributeValueListCreateView(ListCreateAPIView):
+    queryset = AttributeValue.objects.all()
+    serializer_class = AttributeValueSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+class AttributeValueDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = AttributeValue.objects.all()
+    serializer_class = AttributeValueSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# ================================
+# Product Views
+# ================================
+class ProductListCreateView(ListCreateAPIView):
+    serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        # Filter products by the vendor of the logged-in user
+        return Product.objects.filter(vendor=self.request.user.vendor_details)
+
+    def get_permissions(self):
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        # Save the product with the vendor set to the logged-in user's vendor details
+        serializer.save(vendor=self.request.user.vendor_details)
+
+
+class ProductDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+
+    def get_permissions(self):
+        return [IsAuthenticated()]
+
+# ================================
+# Product Variant Views
+# ================================
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.permissions import IsAuthenticated
+from .models import ProductVariant, VariantImage
+from .serializers import ProductVariantSerializer
+from rest_framework import serializers
+
+class ProductVariantListCreateView(ListCreateAPIView):
+    queryset = ProductVariant.objects.all()
+    serializer_class = ProductVariantSerializer
+
+    def get_permissions(self):
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        product_variant = serializer.save()
+        images = self.request.FILES.getlist('images')
+        for image in images:
+            VariantImage.objects.create(product_variant=product_variant, image=image)
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except serializers.ValidationError as e:
+            return Response({"error": e.detail}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProductVariantDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = ProductVariant.objects.all()
+    serializer_class = ProductVariantSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def perform_update(self, serializer):
+        # Update the product variant
+        product_variant = serializer.save()
+
+        # Handle nested image updates
+        images = self.request.FILES.getlist('images')  # Expect multiple files with key 'images'
+        if images:
+            # Clear existing images
+            VariantImage.objects.filter(product_variant=product_variant).delete()
+            # Add new images
+            for image in images:
+                VariantImage.objects.create(product_variant=product_variant, image=image)
+
+
+
+# ================================
+# Product Image Views
+# ================================
+class ProductImageListCreateView(ListCreateAPIView):
+    queryset = ProductImage.objects.all()
+    serializer_class = ProductImageSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+class ProductImageDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = ProductImage.objects.all()
+    serializer_class = ProductImageSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+
+from rest_framework.generics import RetrieveDestroyAPIView
+from .models import VariantImage
+from .serializers import VariantImageSerializer
+
+class VariantImageDetailView(RetrieveDestroyAPIView):
+    """
+    Allows retrieving and deleting a specific VariantImage by its primary key.
+    """
+    queryset = VariantImage.objects.all()
+    serializer_class = VariantImageSerializer
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .models import FeaturedProduct, Product
+from .serializers import FeaturedProductSerializer
+from vendors.models import VendorDetails
+from django.core.exceptions import ValidationError
+
+class FeaturedProductListCreateView(APIView):
+    def get(self, request):
+        # Fetch the vendor for the logged-in user
+        try:
+            vendor = VendorDetails.objects.get(user=request.user)
+        except VendorDetails.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get all featured products for the logged-in vendor
+        featured_products = FeaturedProduct.objects.filter(vendor=vendor)
+        serializer = FeaturedProductSerializer(featured_products, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Fetch the vendor for the logged-in user
+        try:
+            vendor = VendorDetails.objects.get(user=request.user)
+        except VendorDetails.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Validate the product belongs to the logged-in vendor
+        product_id = request.data.get('product')
+        try:
+            product = Product.objects.get(id=product_id, vendor=vendor)
+        except Product.DoesNotExist:
+            return Response({"detail": "This product does not belong to you."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate and save the featured product
+        if vendor.featured_products.count() >= 10:
+            return Response({"detail": "You can only have up to 10 featured products."}, status=status.HTTP_400_BAD_REQUEST)
+
+        featured_product = FeaturedProduct(vendor=vendor, product=product)
+        try:
+            featured_product.save()
+        except ValidationError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = FeaturedProductSerializer(featured_product)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, product_id):
+        """
+        Remove a featured product.
+        """
+        try:
+            vendor = VendorDetails.objects.get(user=request.user)
+        except VendorDetails.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        featured_product = get_object_or_404(FeaturedProduct, product_id=product_id, vendor=vendor)
+        featured_product.delete()
+
+        return Response({"message": "Featured product removed successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+from rest_framework.generics import ListAPIView
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Q
+from .models import Product, Category
+from .serializers import ProductFilterSerializer
+
+
+class ProductPagination(PageNumberPagination):
+    """
+    Custom pagination class for product filtering.
+    """
+    page_size = 6  # Number of products per page
+    page_size_query_param = 'page_size'  # Allow users to set page size via query
+    max_page_size = 100  # Maximum products per page
+
+
+class ProductFilterByCategoryView(ListAPIView):
+    """
+    API view to filter products by category, including subcategories.
+    """
+    serializer_class = ProductFilterSerializer
+    pagination_class = ProductPagination
+    permission_classes = []  # Open to all users (no authentication required)
+
+    def get_queryset(self):
+        # Get the category ID from the query parameters
+        category_id = self.request.query_params.get('category_id')
+        if not category_id:
+            return Product.objects.none()  # Return an empty queryset if no category ID
+
+        try:
+            # Get the selected category
+            category = Category.objects.get(id=category_id)
+
+            # Fetch all subcategories, including the selected category
+            subcategories = Category.objects.filter(Q(id=category.id) | Q(parent=category))
+
+            # Return filtered products for the subcategories
+            return Product.objects.filter(category__in=subcategories, is_active=True).select_related('category')
+
+        except Category.DoesNotExist:
+            return Product.objects.none()  # Return an empty queryset if the category is not found
+
+
+
+
+from rest_framework.generics import ListAPIView
+from rest_framework.pagination import PageNumberPagination
+from .models import Product
+from .serializers import NewArrivalsSerializer
+from datetime import timedelta
+from django.utils.timezone import now
+
+class NewArrivalsPagination(PageNumberPagination):
+    page_size = 8  # Default number of products per page
+    page_size_query_param = 'page_size'  # Allow frontend to set the page size
+    max_page_size = 90 # Limit the maximum number of products per page
+
+class NewArrivalsView(ListAPIView):
+    serializer_class = NewArrivalsSerializer
+    pagination_class = NewArrivalsPagination
+
+
+    permission_classes = []
+    def get_queryset(self):
+        # Define the time window for "New Arrivals" (e.g., last 30 days)
+        new_arrivals_window = now() - timedelta(days=30)
+
+        # Get products within the new arrivals window
+        new_products = Product.objects.filter(created_at__gte=new_arrivals_window).order_by('-created_at')
+
+        # If fewer than the desired count, add older products to fill the gap
+        if new_products.count() < self.pagination_class.page_size:
+            fallback_products = Product.objects.exclude(id__in=new_products).order_by('-created_at')[:self.pagination_class.page_size - new_products.count()]
+            return new_products | fallback_products  # Combine querysets
+
+        return new_products
+
+
+
+from rest_framework.generics import ListAPIView
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny
+from django.shortcuts import get_object_or_404
+from rest_framework.response import Response
+from products.models import Product, Category
+from products.serializers import ProductSerializer
+
+class ProductPagination(PageNumberPagination):
+    page_size = 8  # Limit to 8 products per page
+    page_size_query_param = 'page_size'  # Allow clients to override page size
+    max_page_size = 100  # Set a maximum limit for page size
+
+class ProductListView(ListAPIView):
+    """
+    View to retrieve paginated products, including those from nested subcategories of a root category.
+    """
+    permission_classes = [AllowAny]  # Allow access to all users
+    serializer_class = ProductSerializer
+    pagination_class = ProductPagination
+
+    def get_queryset(self):
+        # Get the root category ID from the request (e.g., query parameter or URL)
+        root_category_id = self.request.query_params.get('category_id')
+        if not root_category_id:
+            return Product.objects.none()  # Return an empty queryset if no category ID is provided
+
+        # Fetch the root category
+        root_category = get_object_or_404(Category, id=root_category_id)
+
+        # Get all subcategories, including nested ones
+        all_subcategories = root_category.get_all_subcategories()
+        all_category_ids = [category.id for category in all_subcategories]
+        all_category_ids.append(root_category.id)  # Include the root category itself
+
+        # Query products for these categories
+        return Product.objects.filter(category_id__in=all_category_ids, is_active=True)
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from .models import Category
+from .serializers import CategorySerializernavbar
+
+class CategoryHierarchyView(APIView):
+    """
+    Fetch the entire category hierarchy down to the leaf level.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, category_id=None):
+        if category_id:
+            # Fetch the selected category
+            category = get_object_or_404(Category, id=category_id)
+
+            # Return the selected category and all its subcategories
+            return Response(CategorySerializernavbar(category).data, status=status.HTTP_200_OK)
+        else:
+            # Fetch all root categories and their subcategories
+            root_categories = Category.objects.filter(parent=None)
+            return Response(CategorySerializernavbar(root_categories, many=True).data, status=status.HTTP_200_OK)
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from .models import Category, Product
+from .serializers import ProductSerializer
+
+class ProductsByCategoryView(APIView):
+    """
+    Fetch products for a specific category (including root, subcategory, or leaf category).
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, category_id):
+        # Fetch the category
+        category = get_object_or_404(Category, id=category_id)
+
+        # Fetch products under the specified category
+        products = Product.objects.filter(category=category, is_active=True)
+        serialized_products = ProductSerializer(products, many=True).data
+
+        return Response({
+            "category": {
+                "id": category.id,
+                "name": category.name,
+                "slug": category.slug
+            },
+            "products": serialized_products
+        }, status=status.HTTP_200_OK)
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.db.models import Count
+from .models import Category
+from .serializers import CategorySerializer
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from django.shortcuts import get_object_or_404
+from products.models import Category
+
+class CategoryWithProducts(APIView):
+    """
+    API to display categories that have products in their hierarchy,
+    filtering recursively from the leaf categories. 
+    Supports filtering by category ID.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, category_id=None):
+        def filter_categories_with_products(category):
+            """
+            Recursively check if a category or any of its subcategories have products.
+            """
+            # If it's a leaf category, check if it has products
+            if not category.subcategories.exists():
+                return category.products.exists()
+
+            # Check recursively for subcategories
+            has_products = False
+            valid_subcategories = []
+            for sub in category.subcategories.all():
+                if filter_categories_with_products(sub):
+                    has_products = True
+                    valid_subcategories.append(sub)
+
+            # Filter subcategories to only include those with products
+            category._filtered_subcategories = valid_subcategories
+            return has_products
+
+        # If category ID is provided, fetch that category
+        if category_id:
+            category = get_object_or_404(Category, id=category_id)
+            categories = [category] if filter_categories_with_products(category) else []
+        else:
+            # Get all root categories
+            categories = [cat for cat in Category.objects.filter(parent=None) if filter_categories_with_products(cat)]
+
+        # Serialize the filtered categories with their filtered subcategories
+        def serialize_category(category):
+            return {
+                "id": category.id,
+                "name": category.name,
+                "slug": category.slug,
+                "parent": category.parent.id if category.parent else None,
+                "subcategories": [serialize_category(sub) for sub in getattr(category, '_filtered_subcategories', [])],
+                "icon": category.icon.url if category.icon else None,
+                "banners": category.banners.url if category.banners else None
+            }
+
+        response_data = [serialize_category(cat) for cat in categories]
+        return Response(response_data)
+
+
+
+
+
+class LeafCategoriesWithProductsOnlyView(APIView):
+    """
+    API to display only the leaf categories that have products.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        # Fetch only leaf categories that have associated products
+        leaf_categories = Category.objects.filter(subcategories__isnull=True).annotate(
+            product_count=Count('products')
+        ).filter(product_count__gt=0)
+
+        # Serialize only the required fields of the leaf categories
+        response_data = [
+            {
+                "id": category.id,
+                "name": category.name,
+                "slug": category.slug,
+                "parent": category.parent.id if category.parent else None,
+                "subcategories": [],
+                "icon": category.icon.url if category.icon else None
+            }
+            for category in leaf_categories
+        ]
+
+        return Response(response_data)
+
+
+from products.serializers import StoreCategorySerializer
+
+
+class LeafCategoriesByShopView(APIView):
+    """
+    Fetch only the leaf categories related to a specific shop.
+    """
+    permission_classes = []  # Open to all users
+
+    def get(self, request, shop_name):
+        # Fetch the vendor using the shop name
+        vendor = get_object_or_404(VendorDetails, shop_name=shop_name)
+
+        # Fetch all products for the given vendor
+        products = Product.objects.filter(vendor=vendor)
+
+        # Create a set of categories that are linked to these products
+        category_set = set(product.category for product in products if product.category)
+
+        # Filter for leaf categories (categories without subcategories)
+        leaf_categories = [category for category in category_set if not category.subcategories.exists()]
+
+        # Serialize the leaf categories using the new serializer
+        serialized_categories = StoreCategorySerializer(leaf_categories, many=True).data
+
+        return Response({
+            "shop_name": vendor.shop_name,
+            "leaf_categories": serialized_categories  # Only leaf categories
+        }, status=status.HTTP_200_OK)
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from vendors.models import VendorDetails
+from products.models import Product, Category
+from products.serializers import RelatedProductSerializer
+
+class ProductsByShopAndCategoryView(APIView):
+    """
+    Fetch all products based on shop name and category, including their variants.
+    """
+    permission_classes = []  # Adjust permissions as required
+
+    def get(self, request, shop_name, category_id):
+        # Fetch the vendor using the shop name
+        vendor = get_object_or_404(VendorDetails, shop_name=shop_name)
+
+        # Fetch the category using the category_id
+        category = get_object_or_404(Category, id=category_id)
+
+        # Fetch products for the given vendor and category
+        products = Product.objects.filter(vendor=vendor, category=category)
+
+        # Serialize the products
+        serialized_products = RelatedProductSerializer(products, many=True).data
+
+        return Response({
+            "shop_name": vendor.shop_name,
+            "category_name": category.name,
+            "products": serialized_products,
+        }, status=status.HTTP_200_OK)
+
+
+
+
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.pagination import PageNumberPagination
+from .models import LimitedEditionProduct
+from .serializers import LimitedEditionProductSerializer
+
+class LimitedEditionPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from .models import LimitedEditionProduct, Product
+from .serializers import LimitedEditionProductSerializer
+
+
+class LimitedEditionProductListCreateView(ListCreateAPIView):
+    """
+    List and create limited edition products.
+    """
+    queryset = LimitedEditionProduct.objects.all().order_by('-available_from')
+    serializer_class = LimitedEditionProductSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        """
+        Restrict list to products owned by the vendor, unless the user is an admin.
+        """
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        if not user.is_staff:  # Non-admins should only see their own products
+            queryset = queryset.filter(vendor=user.vendor_details)
+        
+        # Optional: Filter by available date
+        now = self.request.query_params.get('current_date', None)
+        if now:
+            queryset = queryset.filter(available_from__lte=now, available_until__gte=now)
+        
+        return queryset
+
+    def perform_create(self, serializer):
+        """
+        Automatically assign the vendor based on the authenticated user.
+        """
+        user = self.request.user
+        
+        # Ensure the user is a vendor
+        try:
+            vendor = user.vendor_details
+        except AttributeError:
+            return Response({"detail": "You are not a registered vendor."}, status=status.HTTP_403_FORBIDDEN)
+        
+        serializer.save(vendor=vendor)  # Auto-set vendor field
+
+
+class LimitedEditionProductDetailView(RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve, update, and delete a limited edition product.
+    """
+    queryset = LimitedEditionProduct.objects.all()
+    serializer_class = LimitedEditionProductSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        """
+        Restrict access to only the vendor's products unless the user is an admin.
+        """
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if not user.is_staff:  # Non-admins should only see their own products
+            queryset = queryset.filter(vendor=user.vendor_details)
+
+        return queryset
+
+    def delete(self, request, pk):
+        """
+        Delete a limited edition product if the vendor owns it.
+        """
+        user = request.user
+        
+        try:
+            vendor = user.vendor_details
+        except AttributeError:
+            return Response({"detail": "You are not a registered vendor."}, status=status.HTTP_403_FORBIDDEN)
+
+        limited_product = get_object_or_404(LimitedEditionProduct, id=pk, vendor=vendor)
+        limited_product.delete()
+        
+        return Response({"message": "Limited Edition Product removed successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.pagination import PageNumberPagination
+from .models import LimitedEditionProduct
+from .serializers import LimitedEditionProductSerializer
+
+class AllLimitedEditionProductsPagination(PageNumberPagination):
+    page_size = 10  # Number of products per page
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+class AllLimitedEditionProductsView(ListAPIView):
+    """
+    View to list all limited edition products across all vendors.
+    Accessible to all users.
+    """
+    queryset = LimitedEditionProduct.objects.select_related(
+        'product', 'product__category', 'vendor'
+    ).prefetch_related('product__variants').order_by('-available_from')
+    
+    serializer_class = LimitedEditionProductSerializer
+    pagination_class = AllLimitedEditionProductsPagination
+    permission_classes = [AllowAny]  # Open to everyone
+
+
+
+
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from django.db.models import Q, Prefetch
+from .models import Product, ProductVariant
+from .serializers import ProductSerializer
+
+class ProductFilterView(APIView):
+    
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        API to filter products dynamically based on category, price, brand, attributes, and stock availability.
+        """
+        filters = Q()
+
+        # Category Filter
+        category_id = request.GET.get('category_id')
+        if category_id:
+            filters &= Q(category_id=category_id)
+
+        # Price Range Filter
+        min_price = request.GET.get('min_price')
+        max_price = request.GET.get('max_price')
+        if min_price:
+            filters &= Q(variants__offer_price__gte=min_price)
+        if max_price:
+            filters &= Q(variants__offer_price__lte=max_price)
+
+        # Brand Filter
+        brand_id = request.GET.get('brand_id')
+        if brand_id:
+            filters &= Q(vendor_id=brand_id)
+
+        # Stock Availability Filter
+        in_stock = request.GET.get('in_stock')
+        if in_stock == 'true':
+            filters &= Q(variants__stock__gt=0)
+
+        # ✅ Improved Dynamic Attribute Filtering (Supports Single & Multi-Attribute OR Conditions)
+        attribute_filters = request.GET.getlist('attributes')
+        if attribute_filters:
+            attr_queries = Q()
+            for attr_filter in attribute_filters:
+                if ':' in attr_filter:
+                    _, attr_value = attr_filter.split(':', 1)  # Extract attribute value only
+                    attr_queries |= Q(variants__attributes__value=attr_value)  # ✅ Apply OR condition for multiple attributes
+            filters &= attr_queries  # Ensures products with ANY matching attribute are included
+
+        # Query Products with Prefetching
+        products = Product.objects.filter(filters).prefetch_related(
+            Prefetch('variants', queryset=ProductVariant.objects.prefetch_related('attributes'))
+        ).distinct()
+
+        # Serialize and Return Response
+        serializer = ProductSerializer(products, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+# File: products\urls.py
+from django.urls import path
+from .views import (
+    CategoryListCreateView,
+    CategoryDetailView,
+    AttributeListCreateView, 
+    AttributeDetailView,
+    AttributeValueListCreateView, 
+    AttributeValueDetailView,
+    ProductListCreateView, 
+    ProductDetailView,
+    ProductVariantListCreateView, 
+    ProductVariantDetailView,
+    ProductImageListCreateView, 
+    ProductImageDetailView,
+    LeafCategoriesByParentView,
+    VariantImageDetailView,
+    FeaturedProductListCreateView,
+    ProductFilterByCategoryView,
+    NewArrivalsView,
+    ProductListView,
+    CategoryHierarchyView,
+    ProductsByCategoryView,
+    CategoryWithProducts,
+    LeafCategoriesWithProductsOnlyView,
+    LeafCategoriesByShopView,
+    ProductsByShopAndCategoryView,
+    LimitedEditionProductListCreateView, 
+    LimitedEditionProductDetailView,
+    AllLimitedEditionProductsView, 
+    ProductFilterView,
+
+    
+
+    
+
+)
+
+urlpatterns = [
+    # Category URLs
+    path('categories/', CategoryListCreateView.as_view(), name='category-list-create'),
+    path('categories/<int:pk>/', CategoryDetailView.as_view(), name='category-detail'),
+    path('categories/<int:parent_id>/leaf/', LeafCategoriesByParentView.as_view(), name='leaf-categories'),
+
+    # Attribute URLs
+    path('attributes/', AttributeListCreateView.as_view(), name='attribute-list-create'),
+    path('attributes/<int:pk>/', AttributeDetailView.as_view(), name='attribute-detail'),
+    path('attribute-values/', AttributeValueListCreateView.as_view(), name='attribute-value-list-create'),
+    path('attribute-values/<int:pk>/', AttributeValueDetailView.as_view(), name='attribute-value-detail'),
+
+    # Product URLs
+    path('products/', ProductListCreateView.as_view(), name='product-list-create'),
+    path('products/<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
+
+    # Product Variant URLs
+    path('variants/', ProductVariantListCreateView.as_view(), name='variant-list-create'),
+    path('variants/<int:pk>/', ProductVariantDetailView.as_view(), name='variant-detail'),
+    path('variants/images/<int:pk>/', VariantImageDetailView.as_view(), name='variant-image-detail'),
+
+    # Product Image URLs
+    path('images/', ProductImageListCreateView.as_view(), name='image-list-create'),
+    path('images/<int:pk>/', ProductImageDetailView.as_view(), name='image-detail'),
+
+    path('featured-products/', FeaturedProductListCreateView.as_view(), name='featured-products'),
+    path('featured-products/<int:product_id>/', FeaturedProductListCreateView.as_view(), name='featured-product-delete'),
+
+    
+    path('products/filter/', ProductFilterByCategoryView.as_view(), name='product-filter'),
+    
+    path('products/new-arrivals/', NewArrivalsView.as_view(), name='new-arrivals'),
+
+    path('filter-category-products/', ProductListView.as_view(), name='filter-category-products'),
+
+    path('categories/hierarchy/', CategoryHierarchyView.as_view(), name='category-hierarchy'),
+    path('categories/hierarchy/<int:category_id>/', CategoryHierarchyView.as_view(), name='category-hierarchy-detail'),
+
+    path('categories/<int:category_id>/products/', ProductsByCategoryView.as_view(), name='products-by-leaf-category'),
+
+    path('categories-with-products/', CategoryWithProducts.as_view(), name='categories-with-products'),
+    path('categories-with-products/<int:category_id>/', CategoryWithProducts.as_view(), name='categories-with-products-by-id'),
+    
+    path('leaf-categories-with-products/', LeafCategoriesWithProductsOnlyView.as_view(), name='leaf-categories-with-products'),
+
+
+
+
+    path('stores/<str:shop_name>/leaf-categories/', LeafCategoriesByShopView.as_view(), name='leaf-categories-by-shop'),
+    path('stores/<str:shop_name>/categories/<int:category_id>/products/', ProductsByShopAndCategoryView.as_view(), name='products-by-shop-and-category'),
+
+
+    # List and create Limited Edition products
+    path('limited-edition-products/', LimitedEditionProductListCreateView.as_view(), name='limited-edition-list-create'),
+    
+    # Retrieve, update, or delete a specific Limited Edition product
+    path('limited-edition-products/<int:pk>/', LimitedEditionProductDetailView.as_view(), name='limited-edition-detail'),
+    
+
+
+    path('limited-edition/', AllLimitedEditionProductsView.as_view(), name='all-limited-edition-products'),
+
+    path('filter/', ProductFilterView.as_view(), name='product-filter'),
+
+
+]
+
+
+# File: products\tasks.py
+from celery import shared_task
+from PIL import Image
+import os
+from django.conf import settings
+from django.core.cache import cache
+from .models import ProductImage, Category
+
+
+@shared_task
+def convert_image_to_jpeg(image_path):
+    """
+    Convert an image to JPEG format if not already in JPEG format.
+    """
+    try:
+        output_path = f"{os.path.splitext(image_path)[0]}.jpeg"
+        if not os.path.exists(output_path):  # Avoid overwriting existing files
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')  # Ensure the image is in RGB mode
+                img.save(output_path, 'JPEG', quality=85)
+            return f"Converted {image_path} to {output_path}"
+        return f"Image {output_path} already exists."
+    except Exception as e:
+        return f"Error processing {image_path}: {e}"
+
+
+@shared_task
+def refresh_category_cache():
+    """
+    Refresh the cached category structure and associated products.
+    """
+    categories = Category.objects.all()
+    results = []
+
+    for category in categories:
+        # Cache key for products under this category
+        cache_key = f"category_products_{category.slug}"
+        products = category.products.all()  # Assuming related_name='products' in Category
+        product_data = [
+            {"id": product.id, "name": product.name, "price": product.base_price}
+            for product in products
+        ]
+        cache.set(cache_key, product_data, timeout=6 * 60 * 60)  # Cache for 6 hours
+        results.append(f"Cached products for category {category.slug}")
+
+    return results
+
+
+@shared_task
+def process_all_images():
+    """
+    Convert all ProductImage files to JPEG.
+    """
+    images = ProductImage.objects.all()
+    results = []
+
+    for image in images:
+        image_path = image.image.path
+        result = convert_image_to_jpeg(image_path)
+        results.append(result)
+
+    return results
+
+
+@shared_task
+def refresh_category_hierarchy_cache():
+    """
+    Cache the entire category hierarchy for optimized front-end loading.
+    """
+    category_data = list(
+        Category.objects.all().values("id", "name", "slug", "parent_id")
+    )
+    cache.set("category_hierarchy", category_data, timeout=6 * 60 * 60)  # Cache for 6 hours
+    return "Category hierarchy cached successfully."
+
+
+##################################################
+
