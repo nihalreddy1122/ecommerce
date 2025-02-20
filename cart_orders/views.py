@@ -398,7 +398,8 @@ class BuyNowView(APIView):
             payment_status=payment_status,
             address=address
         )
-        print(f"Order created with payment_status: {order.payment_status}")  # Debugging
+        print(f"Order created with payment_status: {order.payment_status}")
+          # Debugging
 
         # Create order items
         for item in cart_items:
@@ -425,7 +426,8 @@ class BuyNowView(APIView):
 
         # Clear the cart
         cart.items.all().delete()
-
+        for item in order.items.all():
+            item.update_status("conformed")
         # Serialize the order
         serializer = OrderSerializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -551,6 +553,8 @@ class PaymentVerificationView(APIView):
                 }
             )
             # Update the order's payment status
+            for item in order.items.all():
+                item.update_status("conformed")
             order.payment_status = "paid"
             order.save()
 

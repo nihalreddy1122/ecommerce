@@ -293,3 +293,111 @@ class storecategoryview(APIView):
             
         except VendorDetails.DoesNotExist:
             return Response({"error": "Store not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+
+from rest_framework import generics
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+from rest_framework.permissions import IsAuthenticated
+from django.utils.timezone import now
+from datetime import timedelta
+from cart_orders.models import OrderItem
+from cart_orders.serializers import OrderItemSerializer
+
+from rest_framework import generics
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+from rest_framework.permissions import IsAuthenticated
+from django.utils.timezone import now
+from datetime import timedelta
+from cart_orders.models import OrderItem
+from cart_orders.serializers import OrderItemSerializer
+from datetime import datetime
+
+
+
+class OrderItemListView(generics.ListAPIView):
+    serializer_class = OrderItemSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    ordering_fields = ["updated_at"]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = OrderItem.objects.filter(vendor=user.vendor_details)
+
+        # Filtering by multiple order statuses
+        order_status = self.request.query_params.get('order_status', None)
+        if order_status:
+            status_list = order_status.split(",")  # Split multiple statuses
+            queryset = queryset.filter(order_status__in=status_list)
+
+        # Filtering by date
+        date_filter = self.request.query_params.get('date_filter', None)
+        if date_filter:
+            try:
+                # If the user provides a specific date (YYYY-MM-DD format)
+                specific_date = datetime.strptime(date_filter, "%Y-%m-%d").date()
+                queryset = queryset.filter(updated_at__date=specific_date)
+            except ValueError:
+                # If the user uses predefined values like 'last_day' or 'last_month'
+                if date_filter == 'last_day':
+                    queryset = queryset.filter(updated_at__gte=now() - timedelta(days=1))
+                elif date_filter == 'last_month':
+                    queryset = queryset.filter(updated_at__gte=now() - timedelta(days=30))
+
+        return queryset
+
+class ConfirmedOrderItemsView(APIView):
+    """
+    API endpoint to retrieve order items with 'confirmed' status.
+    """
+    permission_classes = [IsAuthenticated]  # Restrict access to authenticated users
+
+    def get(self, request, *args, **kwargs):
+        user = self.request.user
+        confirmed_items = OrderItem.objects.filter(order_status="confirmed", vendor = user.vendor_details)
+        serializer = OrderItemSerializer(confirmed_items, many=True)
+        return Response(serializer.data)
+    
+
+from django.shortcuts import get_object_or_404
+
+class PackOrderItemView(APIView):
+    """
+    API endpoint to update an order item status to 'packed'.
+    Ensures that:
+    - A vendor can only update their assigned order items.
+    - Only 'confirmed' order items can be packed.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        order_item_id = request.data.get("order_item_id")
+
+        if not order_item_id:
+            return Response({"error": "Order item ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        order_item = get_object_or_404(OrderItem, id=order_item_id)
+
+        # Ensure the authenticated user is the vendor assigned to this order item
+        if order_item.vendor != request.user.vendor_details:
+            return Response(
+                {"error": "You are not authorized to update this order item."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Ensure the order item is in "confirmed" status before updating to "packed"
+        if order_item.order_status != "confirmed":
+            return Response(
+                {"error": "Only confirmed order items can be packed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Update order status to "packed"
+        order_item.update_status("packed")
+        order_item.order_status = "packed"
+        
+        order_item.save()
+
+        return Response({"message": "Order item status updated to 'packed'."}, status=status.HTTP_200_OK)

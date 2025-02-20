@@ -408,3 +408,48 @@ class RelatedProductsView(generics.GenericAPIView):
         serializer = RelatedProductSerializer(productset, many=True)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+from rest_framework import status
+
+class OrderItemStatusDatesView(APIView):
+    """
+    API endpoint to fetch all status update timestamps for an order item.
+    Returns only non-null timestamps.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_item_id):
+        order_item = get_object_or_404(OrderItem, id=order_item_id)
+
+        # Ensure the authenticated user is authorized (vendor or admin)
+        if order_item.order.customer != request.user :
+            return Response({"error": "You are not authorized to view this order item."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Extract only non-null timestamps
+        status_dates = {
+            "confirmed_at": order_item.confirmed_at,
+            "packed_at": order_item.packed_at,
+            "warehouse_at": order_item.warehouse_at,
+            "shipped_at": order_item.shipped_at,
+            "delivered_at": order_item.delivered_at,
+            "cancelled_at": order_item.cancelled_at,
+            "returned_at": order_item.returned_at,
+        }
+        non_null_status_dates = {key: value for key, value in status_dates.items() if value is not None}
+
+        return Response(non_null_status_dates, status=status.HTTP_200_OK)
+    
+
+
+class ConfirmedOrderItemsView(APIView):
+    """
+    API endpoint to retrieve order items with 'confirmed' status.
+    """
+    permission_classes = [IsAuthenticated]  # Restrict access to authenticated users
+
+    def get(self, request, *args, **kwargs):
+        confirmed_items = OrderItem.objects.exclude(order_status="created").filter(order__customer=request.user)
+        serializer = OrderItemSerializer(confirmed_items, many=True)
+        return Response(serializer.data)

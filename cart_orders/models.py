@@ -147,6 +147,9 @@ class Order(models.Model):
 
 
 
+from django.db import models
+from django.utils.timezone import now
+
 class OrderItem(models.Model):
     """
     Represents an individual item in an order.
@@ -158,10 +161,11 @@ class OrderItem(models.Model):
     ]
     
     ORDER_STATUS_CHOICES = [
+        ('created', 'Created'),
         ('confirmed', 'Confirmed'),
         ('packed', 'Packed'),
         ('warehouse', 'Warehouse'),
-        ("shiped", 'Shipped'),
+        ("shipped", 'Shipped'),
         ('delivered', 'Delivered'),
         ('cancelled', 'Cancelled'),
         ('returned', 'Returned'),
@@ -202,17 +206,25 @@ class OrderItem(models.Model):
         help_text="Status of the order item."
     )
 
+    # Timestamp fields for each order status (default to NULL)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    packed_at = models.DateTimeField(null=True, blank=True)
+    warehouse_at = models.DateTimeField(null=True, blank=True)
+    shipped_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True, help_text="The date and time when this item was added to the order.")
     updated_at = models.DateTimeField(auto_now=True, help_text="The date and time when this item was last updated.")
-    delivery_date = models.DateTimeField(null=True, blank=True)  # Allow NULL values,)
+    delivery_date = models.DateTimeField(null=True, blank=True)  # Allow NULL values
 
     def save(self, *args, **kwargs):
         """
-        Automatically set the vendor based on the product variant's product vendor.
+        Automatically set the vendor based on the product variant's product.
         Calculates and updates commission details for the order item.
         """
         if not self.vendor:
-            # Ensure the vendor is set based on the product variant's product
             self.vendor = self.product_variant.product.vendor
 
         super().save(*args, **kwargs)  # Save the OrderItem instance first
@@ -220,7 +232,6 @@ class OrderItem(models.Model):
         # ---------------- NEW UPDATE: Commission and GST Calculation ----------------
         from commission_and_calculations.models import CommissionAndGST
         from commission_and_calculations.calculations import calculate_commission_and_gst
-
 
         # Fetch product price from the linked ProductVariant
         product_price = self.product_variant.offer_price
@@ -243,24 +254,48 @@ class OrderItem(models.Model):
                 "vendor_earnings": calculations["vendor_earnings"],
             }
         )
-        # ------------------------------------------------------------------
 
     def update_status(self, new_status):
         """
         Updates the status of the order item with validation for allowed transitions.
+        Automatically sets the timestamp for the new status.
         """
         valid_transitions = {
             'confirmed': ['packed'],
-            'packed': ['ready_to_pick_up'],
+            'packed': ['warehouse'],
+            'warehouse': ['shipped'],
+            'shipped': ['delivered'],
+            'delivered': [],
+            'cancelled': [],
+            'returned': [],
         }
+
         if new_status in valid_transitions.get(self.order_status, []):
             self.order_status = new_status
+
+            # Set the corresponding timestamp
+            if new_status == "confirmed":
+                self.confirmed_at = now()
+            elif new_status == "packed":
+                self.packed_at = now()
+            elif new_status == "warehouse":
+                self.warehouse_at = now()
+            elif new_status == "shipped":
+                self.shipped_at = now()
+            elif new_status == "delivered":
+                self.delivered_at = now()
+            elif new_status == "cancelled":
+                self.cancelled_at = now()
+            elif new_status == "returned":
+                self.returned_at = now()
+
             self.save()
             return True
         return False
 
     def __str__(self):
         return f"{self.quantity} x {self.product_variant.product.name} in Order #{self.order.id}"
+
 
 
 

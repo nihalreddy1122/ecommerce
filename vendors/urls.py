@@ -16,6 +16,9 @@ urlpatterns = [
 
     path('stores/<str:shop_name>/products/', ProductsByShopNameView.as_view(), name='store-products'),
     path('stores/<str:shop_name>/', storecategoryview.as_view(), name='store-detail'),
+    path('order_table/', OrderItemListView.as_view(), name='order-list'),
+    path('conformed_orders/', ConfirmedOrderItemsView.as_view(), name='confored-order-items'),
+    path('packed/',PackOrderItemView.as_view(), name='packed-order-items'),
 
     
 ]

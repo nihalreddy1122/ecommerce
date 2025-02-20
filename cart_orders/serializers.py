@@ -62,6 +62,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     customer = serializers.SerializerMethodField()
+    product_name = serializers.SerializerMethodField() 
 
     class Meta:
         model = OrderItem
@@ -75,7 +76,16 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'order_status',  # Added the order_status field
             'created_at', 
             'updated_at',
-            'variant_image',  # Include this field for the image
+            'variant_image',
+            'product_name',
+            "cancelled_at",
+            "cancelled_at",
+            "delivered_at",
+            "packed_at",
+            "returned_at",
+            "shipped_at",
+            "warehouse_at",
+              # Include this field for the image
         ]
         read_only_fields = ['id', 'order_status', 'created_at', 'updated_at']  # Made order_status read-only
 
@@ -92,6 +102,12 @@ class OrderItemSerializer(serializers.ModelSerializer):
         if obj.product_variant.images.exists():
             return obj.product_variant.images.first().image.url  # Fetch the first image's URL
         return None  # Return None if no image exists
+    
+    def get_product_name(self, obj):
+        """
+        Fetch the product name from the product variant.
+        """
+        return obj.product_variant.product.name  
 
 class SubOrderSerializer(serializers.ModelSerializer):
     """
@@ -119,7 +135,8 @@ class OrderSerializer(serializers.ModelSerializer):
     """
     items = OrderItemSerializer(many=True, read_only=True)
     sub_orders = SubOrderSerializer(many=True, read_only=True)
-    address = AddressSerializer(read_only=True)  # Include address details
+    address = AddressSerializer(read_only=True) 
+     # Include address details
 
     class Meta:
         model = Order

@@ -42,5 +42,9 @@ urlpatterns = [
     #related product
     path('related-products/<int:product_id>/', RelatedProductsView.as_view(), name='related-products'),
 
+    #track order_item
+    path('conformed/', ConfirmedOrderItemsView.as_view(), name = 'confirmed-order-items'),
+    path('track_order/<int:order_item_id>/', OrderItemStatusDatesView.as_view(), name = 'order_item_tracking'),
+
 
 ]
