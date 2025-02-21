@@ -15,7 +15,7 @@ from vendors.models import *
 from products.serializers import *
 from products.models import Product
 from rest_framework import generics
-
+from admin_portal.models import XpressBeeShipment
 
 class AllProductsView(APIView):
     permission_classes = [AllowAny]
@@ -411,21 +411,25 @@ class RelatedProductsView(generics.GenericAPIView):
 
 
 
-from rest_framework import status
-
 class OrderItemStatusDatesView(APIView):
     """
     API endpoint to fetch all status update timestamps for an order item.
-    Returns only non-null timestamps.
+    Returns only non-null timestamps along with AWB number if available.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, order_item_id):
         order_item = get_object_or_404(OrderItem, id=order_item_id)
 
-        # Ensure the authenticated user is authorized (vendor or admin)
-        if order_item.order.customer != request.user :
+        # Ensure the authenticated user is authorized (vendor or customer)
+        if order_item.order.customer != request.user:
             return Response({"error": "You are not authorized to view this order item."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get AWB number from related XpressBeeShipment if available
+        awb = None
+        shipment = order_item.order.xpress_bees.first()  # Get the first related shipment
+        if shipment and shipment.xpressbees_awb_number:
+            awb = shipment.xpressbees_awb_number
 
         # Extract only non-null timestamps
         status_dates = {
@@ -438,6 +442,10 @@ class OrderItemStatusDatesView(APIView):
             "returned_at": order_item.returned_at,
         }
         non_null_status_dates = {key: value for key, value in status_dates.items() if value is not None}
+
+        # Include AWB number only if it's available
+        if awb:
+            non_null_status_dates["awb"] = awb
 
         return Response(non_null_status_dates, status=status.HTTP_200_OK)
     

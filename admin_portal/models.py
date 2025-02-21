@@ -167,3 +167,56 @@ class SoftData(models.Model):
     serviceability_checked = models.BooleanField(default=False, help_text="Indicates if serviceability check is done")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+
+
+class WareHouseAddress(models.Model):
+    """
+    Represents a user's address for checkout and profile management.
+    """
+    
+    full_name = models.CharField(max_length=255)
+    phone_number = models.CharField(max_length=15)
+    address_line_1 = models.CharField(max_length=255)
+    address_line_2 = models.CharField(max_length=255, blank=True, null=True)
+    city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    postal_code = models.CharField(max_length=10)
+    country = models.CharField(max_length=100, default="India")  # Default to India
+    is_default = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+
+    def __str__(self):
+        return f"{self.full_name}, {self.city}, {self.country}"
+
+
+
+class XpressBeeShipment(models.Model):
+    """
+    Represents a shipment created via Xpressbees.
+    """
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="xpress_bees")
+    xpressbees_awb_number = models.CharField(max_length=50, null=True, blank=True, help_text="Xpressbees AWB number")
+    status = models.CharField(max_length=50, default="pending", help_text="Shipment status")
+    package_weight = models.FloatField()
+    package_length = models.FloatField()
+    package_breadth = models.FloatField()
+    package_height = models.FloatField()
+    payment_type = models.CharField(
+        max_length=10, choices=[("cod", "Cash on Delivery"), ("prepaid", "Prepaid"), ("reverse", "Reverse")]
+    )
+    shipping_charges = models.FloatField(null=True, blank=True, default=0)
+    discount = models.FloatField(null=True, blank=True, default=0)
+    cod_charges = models.FloatField(null=True, blank=True, default=0)
+    order_amount = models.FloatField(null=True, blank=True, default=0)
+    collectable_amount = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Shipment #{self.order.id} - AWB: {self.xpressbees_awb_number}"

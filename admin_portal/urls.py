@@ -1,6 +1,9 @@
 from django.urls import path
 from .views import *
 from customer.views import RefundDetailView
+from rest_framework.routers import DefaultRouter
+
+
 
 urlpatterns = [
     # Admin Logs
@@ -26,11 +29,19 @@ urlpatterns = [
 
     path('soft-data/', CreateSoftDataView.as_view(), name='create-soft-data'),
 
+    path('warehouse-addresses/', WareHouseAddressListCreateView.as_view(), name='warehouse-address-list-create'),
+    path('warehouse-addresses/<int:pk>/', WareHouseAddressDetailView.as_view(), name='warehouse-address-detail'),
+
     # xpressbee 
     path('xpressbee/login/', XpressBeeLogin.as_view(), name = 'xpress-bee-login'),
+    path('create/shipments/', CreateXpressBeeShipment.as_view(), name = 'shipment'),
+    path('return/shipment', CreateReturnShipment.as_view(), name = 'return-shipment'),
 
 
 
     path('conformedOrders/', ConfirmedOrderView.as_view(),name= 'confirmedOrders'),
     path('shipedOrders/', ShippedOrderView.as_view(),name = 'shippedOrders'),
+    
+
+
 ]

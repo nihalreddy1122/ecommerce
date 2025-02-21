@@ -141,12 +141,13 @@ from .serializers import ProductVariantSerializer, ProductImageSerializer
 class ProductSerializer(serializers.ModelSerializer):
     variants = ProductVariantSerializer(many=True, read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
-    product_id = serializers.IntegerField(source='id', read_only=True)  # Added product_id field
+    product_id = serializers.IntegerField(source='id', read_only=True)  
+    sku = serializers.CharField(read_only=True)
 
     class Meta:
         model = Product
         fields = [
-            'id','product_id' ,'name', 'slug', 'description', 'additional_details', 'category',
+            'id','product_id' ,'name', 'sku','slug', 'description', 'additional_details', 'category',
             'thumbnail', 'is_returnable', 'max_return_days', 'is_cancelable', 'cancellation_stage', 'is_cod_allowed',
             'created_at', 'updated_at', 'variants', 'images', 'stock',
         ]
@@ -161,6 +162,7 @@ class ProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"cancellation_stage": "This field is required if the product is cancelable."})
         
         return data
+
 
 class RelatedProductSerializer(serializers.ModelSerializer):
     offer_price = serializers.SerializerMethodField()  # Fetch the offer price dynamically

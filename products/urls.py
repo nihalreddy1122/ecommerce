@@ -28,7 +28,8 @@ from .views import (
     LimitedEditionProductDetailView,
     AllLimitedEditionProductsView, 
     ProductFilterView,
-
+    BulkProductUploadView,
+    BulkProductVariantUploadView,
     
 
     
@@ -51,9 +52,11 @@ urlpatterns = [
     # Product URLs
     path('products/', ProductListCreateView.as_view(), name='product-list-create'),
     path('products/<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
+    path('products/bulk-upload/', BulkProductUploadView.as_view(), name='product-bulk-upload'),  # ✅ New URL for CSV Upload
 
     # Product Variant URLs
     path('variants/', ProductVariantListCreateView.as_view(), name='variant-list-create'),
+    path('bulk-upload-variants/', BulkProductVariantUploadView.as_view(), name='bulk-upload-variants'),
     path('variants/<int:pk>/', ProductVariantDetailView.as_view(), name='variant-detail'),
     path('variants/images/<int:pk>/', VariantImageDetailView.as_view(), name='variant-image-detail'),
 

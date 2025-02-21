@@ -141,3 +141,78 @@ class SoftDataSerializer(serializers.ModelSerializer):
                 })
 
         return data
+
+
+
+
+class WareHouseAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WareHouseAddress
+        fields = '__all__'
+
+
+
+
+from rest_framework import serializers
+from .models import XpressBeeShipment, Order, WareHouseAddress
+
+
+
+class XpressBeeShipmentSerializer(serializers.ModelSerializer):
+    order_id = serializers.IntegerField(write_only=True)  # Accept order_id from input
+    package_weight = serializers.FloatField()
+    package_length = serializers.FloatField()
+    package_breadth = serializers.FloatField()
+    package_height = serializers.FloatField()
+    payment_type = serializers.ChoiceField(choices=["cod", "prepaid", "reverse"], required=False)
+
+    class Meta:
+        model = XpressBeeShipment
+        exclude = ["created_at", "updated_at"]
+
+    def validate_order_id(self, order_id):
+        """
+        Ensure the order with the given ID exists.
+        """
+        try:
+            return Order.objects.get(id=order_id)  # Return the Order instance
+        except Order.DoesNotExist:
+            raise serializers.ValidationError("Order with the given ID does not exist.")
+
+    def validate(self, data):
+        """
+        Perform any custom validation for other fields if required.
+        """
+        order = data.get("order")
+        data["order_amount"] = order.total_price  # Add order_amount dynamically
+        return data
+
+    def create(self, validated_data):
+        # Extract the order instance from validated_data
+        order = validated_data.pop("order")
+
+        # Assign additional logic like warehouse (if needed)
+        try:
+            warehouse = WareHouseAddress.objects.get(id=1)
+        except WareHouseAddress.DoesNotExist:
+            raise serializers.ValidationError("No default warehouse address found. Please set a default warehouse.")
+
+        # Create the shipment instance
+        shipment = XpressBeeShipment.objects.create(
+            order=order,
+            package_weight=validated_data["package_weight"],
+            package_length=validated_data["package_length"],
+            package_breadth=validated_data["package_breadth"],
+            package_height=validated_data["package_height"],
+            payment_type=validated_data.get("payment_type", "cod"),
+            shipping_charges=validated_data.get("shipping_charges", 0),
+            discount=validated_data.get("discount", 0),
+            cod_charges=validated_data.get("cod_charges", 0),
+            order_amount=validated_data["order_amount"],
+            collectable_amount=validated_data.get("collectable_amount", validated_data["order_amount"]),
+        )
+        return shipment
+
+
+
+

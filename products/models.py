@@ -95,6 +95,7 @@ class Product(models.Model):
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=250, unique=True, blank=True)
     description = models.TextField(blank=True, null=True, help_text="Detailed product description")
+    sku = models.CharField(max_length=50, unique=True, blank=True, null=True)
     additional_details = models.JSONField(blank=True, null=True, help_text="Structured additional details for the product")
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, related_name='products')
     thumbnail = models.ImageField(upload_to='product_thumbnails/',null=True)
@@ -130,8 +131,14 @@ class Product(models.Model):
     def save(self, *args, **kwargs):
         # Call clean method for validation before saving
         self.clean()
+        
         if not self.slug:
             self.slug = slugify(f"{self.vendor.id}-{self.name}")
+
+        if not self.sku:
+            random_number = random.randint(1000, 9999)
+            self.sku = slugify(f"{self.name[:3].upper()}-{self.vendor.shop_name[:3].upper()}-{random_number}")
+
         super().save(*args, **kwargs)
 
     def __str__(self):

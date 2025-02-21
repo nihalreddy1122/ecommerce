@@ -3,6 +3,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.parsers import MultiPartParser
+import csv
+import io
+
 from .models import Category, Attribute, AttributeValue, Product, ProductVariant, ProductImage
 from .serializers import (
     CategorySerializer,
@@ -112,6 +116,82 @@ class ProductListCreateView(ListCreateAPIView):
         serializer.save(vendor=self.request.user.vendor_details)
 
 
+import csv
+import io
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from django.utils.text import slugify
+from .models import Product, Category
+
+class BulkProductUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Handle bulk product upload via CSV."""
+        file = request.FILES.get('file')
+        if not file:
+            return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            data_set = file.read().decode('utf-8')
+            io_string = io.StringIO(data_set)
+            reader = csv.DictReader(io_string)
+            
+            products = []
+            errors = []
+            for row in reader:
+                try:
+                    # Validate category
+                    category = Category.objects.filter(id=row.get('category_id')).first()
+                    if not category:
+                        raise ValueError(f"Invalid category_id: {row.get('category_id')}")
+                    
+                    # Generate slug if missing
+                    slug = row.get('slug') or slugify(row.get('name'))
+                    
+                    # Generate SKU if missing
+                    sku = row.get('sku')
+                    if not sku:
+                        sku = slugify(f"{row.get('name')[:3].upper()}-{request.user.vendor_details.shop_name[:3].upper()}-{Product.objects.count() + 1}")
+                    
+                    product = Product(
+                        name=row.get('name'),
+                        description=row.get('description'),
+                        category=category,
+                        vendor=request.user.vendor_details,
+                        stock=int(row.get('stock', 0)),
+                        is_active=row.get('is_active', 'True').lower() == 'true',
+                        is_returnable=row.get('is_returnable', 'False').lower() == 'true',
+                        max_return_days=int(row.get('max_return_days', 0)) if row.get('max_return_days') else None,
+                        is_cancelable=row.get('is_cancelable', 'False').lower() == 'true',
+                        cancellation_stage=row.get('cancellation_stage') if row.get('is_cancelable', 'False').lower() == 'true' else None,
+                        is_cod_allowed=row.get('is_cod_allowed', 'False').lower() == 'true',
+                        slug=slug,
+                        sku=sku,
+                    )
+                    
+                    # Validation checks
+                    product.clean()
+                    products.append(product)
+                except Exception as e:
+                    errors.append({"row": row, "error": str(e)})
+            
+            # Bulk insert validated products
+            if products:
+                Product.objects.bulk_create(products)
+            
+            response_data = {"message": "Products uploaded successfully", "created_count": len(products)}
+            if errors:
+                response_data["errors"] = errors
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
 class ProductDetailView(RetrieveUpdateDestroyAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
@@ -146,6 +226,85 @@ class ProductVariantListCreateView(ListCreateAPIView):
             return super().create(request, *args, **kwargs)
         except serializers.ValidationError as e:
             return Response({"error": e.detail}, status=status.HTTP_400_BAD_REQUEST)
+
+
+import csv
+import io
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from .models import ProductVariant, Product, AttributeValue
+
+class BulkProductVariantUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Handle bulk product variant upload via CSV."""
+        file = request.FILES.get('file')
+        if not file:
+            return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            data_set = file.read().decode('utf-8')
+            io_string = io.StringIO(data_set)
+            reader = csv.DictReader(io_string)
+            
+            variants = []
+            errors = []
+            
+            for row in reader:
+                try:
+                    # Validate product
+                    product = Product.objects.filter(id=row.get('product_id')).first()
+                    if not product:
+                        raise ValueError(f"Invalid product_id: {row.get('product_id')}")
+
+                    # Validate attributes
+                    attribute_ids = row.get('attribute_ids', '')
+                    attribute_list = [int(attr_id.strip()) for attr_id in attribute_ids.split(',') if attr_id.strip()]
+                    attributes = AttributeValue.objects.filter(id__in=attribute_list)
+                    if len(attributes) != len(attribute_list):
+                        raise ValueError(f"Some attribute IDs are invalid: {attribute_ids}")
+
+                    # Generate SKU if missing
+                    sku = row.get('sku', '').strip()
+                    if not sku:
+                        sku = f"{product.id}-{len(product.variants.all()) + 1}"
+
+                    # Create product variant
+                    variant = ProductVariant(
+                        product=product,
+                        base_price=row.get('base_price'),
+                        offer_price=row.get('offer_price'),
+                        stock=int(row.get('stock', 0)),
+                        sku=sku,
+                    )
+
+                    variant.save()  # Save first to generate ID
+                    variant.attributes.set(attributes)  # Set ManyToMany attributes
+
+                    variants.append(variant)
+
+                except Exception as e:
+                    errors.append({"row": row, "error": str(e)})
+
+            if variants:
+                response_data = {
+                    "message": "Product variants uploaded successfully",
+                    "created_count": len(variants),
+                }
+            else:
+                response_data = {"error": "No variants were created due to errors"}
+
+            if errors:
+                response_data["errors"] = errors
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
 class ProductVariantDetailView(RetrieveUpdateDestroyAPIView):
