@@ -14,8 +14,8 @@ urlpatterns = [
     path('shops/', VendorShopListView.as_view(), name='vendor-shops'),
     path('store-images/<int:vendor_id>/', StoreImageView.as_view(), name='store-images'),
 
-    path('stores/<str:shop_name>/products/', ProductsByShopNameView.as_view(), name='store-products'),
-    path('stores/<str:shop_name>/', storecategoryview.as_view(), name='store-detail'),
+    # path('stores/<str:shop_name>/products/', ProductsByShopNameView.as_view(), name='store-products'),
+    # path('stores/<str:shop_name>/', storecategoryview.as_view(), name='store-detail'),
     path('order_table/', OrderItemListView.as_view(), name='order-list'),
     path('conformed_orders/', ConfirmedOrderItemsView.as_view(), name='confored-order-items'),
     path('packed/',PackOrderItemView.as_view(), name='packed-order-items'),

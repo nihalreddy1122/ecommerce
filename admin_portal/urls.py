@@ -28,4 +28,9 @@ urlpatterns = [
 
     # xpressbee 
     path('xpressbee/login/', XpressBeeLogin.as_view(), name = 'xpress-bee-login'),
+
+
+
+    path('conformedOrders/', ConfirmedOrderView.as_view(),name= 'confirmedOrders'),
+    path('shipedOrders/', ShippedOrderView.as_view(),name = 'shippedOrders'),
 ]

@@ -196,3 +196,63 @@ class XpressBeeLogin(APIView):
         except Exception as e:
             # General exception handling
             return Response({"error": "An unexpected error occurred", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+
+
+# Admin dispaly end points
+
+
+class ConfirmedOrderView(APIView):
+    """
+    API endpoint to retrieve order items with 'confirmed' status.
+    """
+    permission_classes = [IsAuthenticated]  # Restrict access to authenticated users
+
+    def get(self, request, *args, **kwargs):
+        #user = self.request.user
+        confirmed_orders = Order.objects.filter(order_status="confirmed")
+        serializer = OrderSerializer(confirmed_orders, many=True)
+        return Response(serializer.data)
+    
+
+class ShippedOrderView(APIView):
+    """
+    API endpoint to update an order item status to 'packed'.
+    Ensures that:
+    - A vendor can only update their assigned order items.
+    - Only 'confirmed' order items can be packed.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        order_id = request.data.get("order_id")
+
+        if not order_id:
+            return Response({"error": "Order ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        order = get_object_or_404(OrderItem, id=order_id)
+
+        # Ensure the authenticated user is the vendor assigned to this order item
+        
+
+        # Ensure the order item is in "confirmed" status before updating to "packed"
+        if order.order_status != "confirmed":
+            return Response(
+                {"error": "Only confirmed order can be packed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        for items in order.items.all():
+            items.update_status("shipped")
+        
+        # Update order status to "packed"
+        #order_item.update_status("packed")
+        order.order_status = "shipped"
+        
+        order.save()
+
+        return Response({"message": "Order item status updated to 'packed'."}, status=status.HTTP_200_OK)

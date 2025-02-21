@@ -90,6 +90,7 @@ class Order(models.Model):
     ]
 
     ORDER_STATUS_CHOICES = [
+        ('created', 'Created'),
         ('placed', 'Order Placed'),      
         ('shipped', 'Shipped'),
         ('delivered', 'Delivered'),
@@ -125,7 +126,7 @@ class Order(models.Model):
     order_status = models.CharField(
         max_length=15,
         choices=ORDER_STATUS_CHOICES,
-        default='placed',
+        default='created',
         help_text="Current status of the order."
     )
     cod_remittance_date = models.DateField(

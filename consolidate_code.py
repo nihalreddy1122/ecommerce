@@ -24,15 +24,15 @@ def consolidate_apps_code(app_dirs, output_file):
 
 # List of app directories to consolidate
 app_directories = [
-    # 'admin_portal',
-    # 'authusers',
-    # 'banners',
-    # 'cart_orders',
-    # 'commission_and_calculations',
-    # 'customer',
-    # 'ecommerce_platform',
+    'admin_portal',
+    'authusers',
+    'banners',
+    'cart_orders',
+    'commission_and_calculations',
+    'customer',
+    'ecommerce_platform',
     'products',
-    #'vendors',
+    'vendors',
     
 ]
 

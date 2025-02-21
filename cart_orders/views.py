@@ -426,8 +426,10 @@ class BuyNowView(APIView):
 
         # Clear the cart
         cart.items.all().delete()
-        for item in order.items.all():
-            item.update_status("conformed")
+        if payment_mode == "COD":
+            for item in order.items.all():
+                item.update_status("conformed")
+            order.order_status = "placed"
         # Serialize the order
         serializer = OrderSerializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -556,6 +558,8 @@ class PaymentVerificationView(APIView):
             for item in order.items.all():
                 item.update_status("conformed")
             order.payment_status = "paid"
+            
+            order.order_status = "placed"
             order.save()
 
             # Update payment status for related order items
